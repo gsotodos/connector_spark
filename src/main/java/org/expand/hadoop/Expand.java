@@ -25,8 +25,8 @@ public class Expand extends FileSystem {
 	private URI uri;
 	private Path workingDirectory;
 	public ExpandFlags flags;
-	private long blksize = 134217728;
-	private int bufsize = 134217728;
+	private long blksize;
+	private int bufsize;
 	private int xpn_replication = 1;
 	private boolean initialized;
 
@@ -39,16 +39,13 @@ public class Expand extends FileSystem {
 	}
 
 	@Override
-	public FSDataOutputStream append(Path f) throws IOException {
-		return append(f, 4096, null);
-	}
-
-	@Override
 	public FSDataOutputStream append(Path f, int bufferSize, Progressable progress){
-		f = removeURI(f);
-		if (!exists(f)) xpn.jni_xpn_creat(f.toString(), flags.S_IRWXU | flags.S_IRWXG | flags.S_IRWXO);
+		String f_str = f.toString();
+		if (f_str.startsWith("xpn:")) f_str = f_str.substring(4);
 
-		return new FSDataOutputStream(new ExpandOutputStream(f.toString(), bufsize, (short) 0, blksize, true), statistics);
+		if (this.xpn.jni_xpn_exist(f_str) == 0) xpn.jni_xpn_creat(f_str, flags.S_IRWXU | flags.S_IRWXG | flags.S_IRWXO);
+
+		return new FSDataOutputStream(new ExpandOutputStream(f_str, bufsize, (short) 0, blksize, true), statistics);
 	}
 
 	public void close() throws IOException {
@@ -56,67 +53,59 @@ public class Expand extends FileSystem {
 	}
 
 	@Override
-	public FSDataOutputStream create(Path f) throws IOException {
-		return create(f, FsPermission.getFileDefault(), true, 4096, (short) 0, (long) 4096, null);
-	}
-
-	@Override
 	public FSDataOutputStream create(Path f, FsPermission permission, boolean overwrite, int bufferSize, short replication, long blockSize, Progressable progress) throws IOException {
-		f = removeURI(f);
+		String f_str = f.toString();
+		if (f_str.startsWith("xpn:")) f_str = f_str.substring(4);
 		Path parent = f.getParent();
 
-		if (exists(f)) {
+		if (this.xpn.jni_xpn_exist(f_str) == 0) {
 			if (overwrite) delete(f, false);
-			else throw new IOException("File already exists: " + f.toString());
+			else throw new IOException("File already exists: " + f_str);
 		}else{
-			if (!exists(parent)) mkdirs(parent, FsPermission.getFileDefault());
+			if (this.xpn.jni_xpn_exist(parent.toString()) != 0) mkdirs(parent, FsPermission.getFileDefault());
 		}
 
-		return new FSDataOutputStream(new ExpandOutputStream(f.toString(), bufsize, replication, 
+		return new FSDataOutputStream(new ExpandOutputStream(f_str, bufsize, replication, 
 					blksize, false), statistics);
 	}
 
 	@Override
 	public boolean delete(Path path, boolean recursive){
-		path = removeURI(path);
+		String path_str = path.toString();
+		if (path_str.startsWith("xpn:")) path_str = path_str.substring(4);
 		
-		if (!exists(path)) return false;
-		if (!isDirectory(path)) return this.xpn.jni_xpn_unlink(path.toString()) == 0;
-		if (!recursive) return this.xpn.jni_xpn_rmdir(path.toString()) == 0;
+		if (this.xpn.jni_xpn_exist(path_str) != 0) return false;
+		if (!isDirectory(path)) return this.xpn.jni_xpn_unlink(path_str) == 0;
+		if (!recursive) return this.xpn.jni_xpn_rmdir(path_str) == 0;
 
-		String [] str = this.xpn.jni_xpn_getDirContent(path.toString());
+		String [] str = this.xpn.jni_xpn_getDirContent(path_str);
 		String deletePath;
 		boolean res;
 
 		for (int i = 0; i < str.length; i++){
 			if (str[i].equals(".") || str[i].equals("..")) continue;
-			res = delete(new Path(path.toString() + "/" + str[i]), true);
+			res = delete(new Path(path_str + "/" + str[i]), true);
 			if (!res) return false;
 		}
 
-		return this.xpn.jni_xpn_rmdir(path.toString()) == 0;
-	}
-
-	public boolean exists (Path path){
-		path = removeURI(path);
-		if (this.xpn.jni_xpn_exist(path.toString()) != 0) return false;
-
-		return true;
+		return this.xpn.jni_xpn_rmdir(path_str) == 0;
 	}
 
 	@Override
 	public BlockLocation[] getFileBlockLocations(FileStatus file,
       								long start, long len) throws IOException {
-		Path path = removeURI(file.getPath());
+		String path = file.getPath().toString();
+		if (path.startsWith("xpn:")) path = path.substring(4);
+
 		if (file == null) {
-			throw new IOException("File does not exist: " + path.toString());
+			throw new IOException("File does not exist: " + path);
 		}
 
 		if (start < 0 || len < 0) {
 			throw new IllegalArgumentException("Invalid start or len parameter");
 		}
 
-		if (getLength(path) <= start) {
+		if (getLength(file.getPath()) <= start) {
 			return new BlockLocation[0];
 		}
 
@@ -128,7 +117,7 @@ public class Expand extends FileSystem {
 		String[][] host = new String[splits][xpn_replication];
 
 		for (int i = 0; i < splits; i++){
-			int res = this.xpn.jni_xpn_get_block_locality(path.toString(), i * blksize, url_v[i]);
+			int res = this.xpn.jni_xpn_get_block_locality(path, i * blksize, url_v[i]);
 
 			for (int j = 0; j < xpn_replication; j++) {
 				InetAddress addr = InetAddress.getByName(url_v[i][j]);
@@ -148,13 +137,14 @@ public class Expand extends FileSystem {
 
 	@Override
 	public FileStatus getFileStatus (Path path) throws IOException {
-		path = removeURI(path);
+		String path_str = path.toString();
+		if (path_str.startsWith("xpn:")) path_str = path_str.substring(4);
 
-		if (!exists(path)) {
-			throw new IOException("File does not exist: " + path.toString());
+		if (this.xpn.jni_xpn_exist(path_str) != 0) {
+			throw new IOException("File does not exist: " + path_str);
 		};
 
-		Stat stats = this.xpn.jni_xpn_stat(path.toString());
+		Stat stats = this.xpn.jni_xpn_stat(path_str);
 		boolean isdir = this.xpn.jni_xpn_isDir(stats.st_mode) != 0;
 		String username = this.xpn.jni_xpn_getUsername((int) stats.st_uid);
 		String groupname = this.xpn.jni_xpn_getGroupname((int) stats.st_gid);
@@ -166,13 +156,14 @@ public class Expand extends FileSystem {
 	}
 
 	public long getLength (Path path) throws IOException {
-		path = removeURI(path);
+		String path_str = path.toString();
+		if (path_str.startsWith("xpn:")) path_str = path_str.substring(4);
 
-		if (!exists(path)) {
-			throw new IOException("File does not exist: " + path.toString());
+		if (this.xpn.jni_xpn_exist(path_str) != 0) {
+			throw new IOException("File does not exist: " + path_str);
 		};
 
-		return this.xpn.jni_xpn_stat(path.toString()).st_size;
+		return this.xpn.jni_xpn_stat(path_str).st_size;
 	}
 
 	@Override
@@ -201,9 +192,10 @@ public class Expand extends FileSystem {
 	
 	@Override
 	public boolean isDirectory (Path path) {
-		path = removeURI(path);
+		String path_str = path.toString();
+		if (path_str.startsWith("xpn:")) path_str = path_str.substring(4);
 		try {
-			Stat stats = this.xpn.jni_xpn_stat(path.toString());
+			Stat stats = this.xpn.jni_xpn_stat(path_str);
 			return this.xpn.jni_xpn_isDir(stats.st_mode) != 0;
 		} catch (Exception e) {
 			return false;
@@ -212,9 +204,10 @@ public class Expand extends FileSystem {
 
 	@Override
 	public FileStatus[] listStatus(Path f) throws IOException {
-		f = removeURI(f);
-		if (!exists(f))
-			throw new IOException("File does not exist: " + f.toString());
+		String f_str = f.toString();
+		if (f_str.startsWith("xpn:")) f_str = f_str.substring(4);
+		if (this.xpn.jni_xpn_exist(f_str) != 0)
+			throw new IOException("File does not exist: " + f_str);
 
 		if (!isDirectory(f)){
 			FileStatus [] list = new FileStatus[1];
@@ -222,11 +215,11 @@ public class Expand extends FileSystem {
 			return list;
 		}
 
-		String str [] = this.xpn.jni_xpn_getDirContent(f.toString());
+		String str [] = this.xpn.jni_xpn_getDirContent(f_str);
 		FileStatus list [] = new FileStatus [str.length];
 		for (int i = 0; i < list.length; i++){
 			if (str.equals(".") || str.equals("..")) continue;
-			list[i] = getFileStatus(new Path(f.toString() + "/" + str[i]));
+			list[i] = getFileStatus(new Path(f_str + "/" + str[i]));
 		}
 
 		return list;
@@ -240,56 +233,49 @@ public class Expand extends FileSystem {
 
 	@Override
 	public boolean mkdirs(Path path, FsPermission permission) throws IOException {
-		path = removeURI(path);
+		String path_str = path.toString();
+		if (path_str.startsWith("xpn:")) path_str = path_str.substring(4);
 		String relPath = "/xpn";
 		String absPath;
-		String [] dirs = path.toString().split("/");
+		String [] dirs = path_str.split("/");
 
 		for (int i = 1; i < dirs.length; i++){
 			if (dirs[i].equals("xpn") && i == 1) continue;
 			relPath += "/" + dirs[i];
-			if (exists(new Path(relPath))) continue;
+			if (this.xpn.jni_xpn_exist(relPath) == 0) continue;
 			int res = this.xpn.jni_xpn_mkdir(relPath , permission.toShort());
-			if (res != 0) throw new IOException("Directory could not be created: " + relPath.toString());
+			if (res != 0) throw new IOException("Directory could not be created: " + relPath);
 		}
 
 		return true;
 	}
 
 	@Override
-	public FSDataInputStream open(Path f){
-		return open(f, bufsize);
-	}
-
-	@Override
 	public FSDataInputStream open(Path f, int bufferSize){
-		f = removeURI(f);
+		String f_str = f.toString();
+		if (f_str.startsWith("xpn:")) f = new Path (f_str.substring(4));
 
-		return new FSDataInputStream(new ExpandFSInputStream(f.toString(), bufsize, statistics));
-	}
-
-	private Path removeURI (Path path){
-		String str [] = path.toString().split(":");
-		if (str.length == 1) return path;
-		else return new Path (str[1]);
+		return new FSDataInputStream(new ExpandFSInputStream(f_str, bufsize, statistics));
 	}
 
 	@Override
 	public boolean rename(Path src, Path dst) throws IOException {
-		src = removeURI(src);
-		dst = removeURI(dst);
+		String src_str = src.toString();
+		String dst_str = dst.toString();
+		if (src_str.startsWith("xpn:")) src = new Path (src_str.substring(4));
+		if (dst_str.startsWith("xpn:")) dst = new Path (dst_str.substring(4));
 
-		if (!exists(src)) throw new IOException("File does not exist: " + src.toString());
-		if (exists(dst)) throw new IOException("File already exists: " + dst.toString());
+		if (this.xpn.jni_xpn_exist(src_str) != 0) throw new IOException("File does not exist: " + src_str);
+		if (this.xpn.jni_xpn_exist(dst_str) == 0) throw new IOException("File already exists: " + dst_str);
 
-		int res = xpn.jni_xpn_rename(src.toString(), dst.toString());
+		int res = xpn.jni_xpn_rename(src_str, dst_str);
 
 		return res == 0;
 	}
 
 	@Override
 	public void setWorkingDirectory(Path new_dir) {
-		new_dir = removeURI(new_dir);
+		if (new_dir.toString().startsWith("xpn:")) new_dir = new Path (new_dir.toString().substring(4));
 		this.workingDirectory = new_dir;
 	}
 
