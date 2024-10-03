@@ -140,9 +140,7 @@ public class Expand extends FileSystem {
 		String path_str = path.toString();
 		if (path_str.startsWith("xpn:")) path_str = path_str.substring(4);
 
-		if (this.xpn.jni_xpn_exist(path_str) != 0) {
-			throw new IOException("File does not exist: " + path_str);
-		};
+		if (this.xpn.jni_xpn_exist(path_str) != 0) return null;
 
 		Stat stats = this.xpn.jni_xpn_stat(path_str);
 		boolean isdir = this.xpn.jni_xpn_isDir(stats.st_mode) != 0;
@@ -152,7 +150,7 @@ public class Expand extends FileSystem {
 
 		return new FileStatus(stats.st_size, isdir, 0, stats.st_blksize,
 					stats.st_mtime * 1000, stats.st_atime * 1000, 
-					permission, username, groupname, path);
+					permission, username, groupname, new Path(path_str));
 	}
 
 	public long getLength (Path path) throws IOException {
@@ -206,8 +204,7 @@ public class Expand extends FileSystem {
 	public FileStatus[] listStatus(Path f) throws IOException {
 		String f_str = f.toString();
 		if (f_str.startsWith("xpn:")) f_str = f_str.substring(4);
-		if (this.xpn.jni_xpn_exist(f_str) != 0)
-			throw new IOException("File does not exist: " + f_str);
+		if (this.xpn.jni_xpn_exist(f_str) != 0) return null;
 
 		if (!isDirectory(f)){
 			FileStatus [] list = new FileStatus[1];
@@ -236,7 +233,6 @@ public class Expand extends FileSystem {
 		String path_str = path.toString();
 		if (path_str.startsWith("xpn:")) path_str = path_str.substring(4);
 		String relPath = "/xpn";
-		String absPath;
 		String [] dirs = path_str.split("/");
 
 		for (int i = 1; i < dirs.length; i++){
@@ -253,7 +249,7 @@ public class Expand extends FileSystem {
 	@Override
 	public FSDataInputStream open(Path f, int bufferSize){
 		String f_str = f.toString();
-		if (f_str.startsWith("xpn:")) f = new Path (f_str.substring(4));
+		if (f_str.startsWith("xpn:")) f_str = f_str.substring(4);
 
 		return new FSDataInputStream(new ExpandFSInputStream(f_str, bufsize, statistics));
 	}
@@ -262,8 +258,8 @@ public class Expand extends FileSystem {
 	public boolean rename(Path src, Path dst) throws IOException {
 		String src_str = src.toString();
 		String dst_str = dst.toString();
-		if (src_str.startsWith("xpn:")) src = new Path (src_str.substring(4));
-		if (dst_str.startsWith("xpn:")) dst = new Path (dst_str.substring(4));
+		if (src_str.startsWith("xpn:")) src_str = src_str.substring(4);
+		if (dst_str.startsWith("xpn:")) dst_str = dst_str.substring(4);
 
 		if (this.xpn.jni_xpn_exist(src_str) != 0) throw new IOException("File does not exist: " + src_str);
 		if (this.xpn.jni_xpn_exist(dst_str) == 0) throw new IOException("File already exists: " + dst_str);
